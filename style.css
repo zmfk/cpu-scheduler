@@ -385,6 +385,7 @@ body {
   100% { opacity: 0; }
 }
 
+/* ===== 甘特图（无动画，纯延展） ===== */
 .gantt-section { margin-bottom:18px; }
 .gantt-label {
   font-size:11.5px; font-weight:700; color:var(--text-secondary);
@@ -405,9 +406,9 @@ body {
   white-space:nowrap; overflow:hidden;
   position:relative; transition:filter .2s;
   border-right:1px solid var(--bg-card);
-  min-width:0; letter-spacing:.3px; animation:blockIn .3s ease;
+  min-width:0; letter-spacing:.3px;
+  /* ★ 这里原本有 animation: blockIn .3s ease; —— 已移除，避免每次重绘都闪一下 */
 }
-@keyframes blockIn { from { opacity:0; } to { opacity:1; } }
 .gantt-block:last-child { border-right:none; }
 .gantt-block:hover { filter:brightness(1.15); z-index:3; }
 .gantt-block .tip {
