@@ -5,6 +5,7 @@
  * 本版改动：
  *   - 时间轴按「每秒一格」渲染，每格出现时闪一下
  *   - 结果表格与指标卡随时钟 t 动态显现
+ *   - 就绪队列与运行中的剩余时间按秒实时更新
  *   - 移除「算法自检」功能
  * ========================================================= */
 (function () {
@@ -23,7 +24,6 @@
   let rowSeq = 0;
   let colorMap = new Map();
   let currentResult = null;
-  let currentSnapshots = null;
   let currentSeconds = null;
 
   const anim = {
@@ -43,6 +43,9 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  /* ---------------------------------------------------------
+   * 工具：compact timeline → 逐秒数组
+   * ------------------------------------------------------- */
   function expandToSeconds(timeline) {
     const seconds = [];
     for (let i = 0; i < timeline.length; i++) {
@@ -54,18 +57,9 @@
     return seconds;
   }
 
-  function findSegmentIndexAtSecond(second) {
-    if (!currentResult) return 0;
-    let acc = 0;
-    for (let i = 0; i < currentResult.timeline.length; i++) {
-      const seg = currentResult.timeline[i];
-      const span = seg.end - seg.start;
-      if (second < acc + span) return i;
-      acc += span;
-    }
-    return currentResult.timeline.length - 1;
-  }
-
+  /* ---------------------------------------------------------
+   * Toast / 下载 / 主题
+   * ------------------------------------------------------- */
   function toast(msg, type) {
     type = type || 'error';
     const container = $('toastContainer');
@@ -107,6 +101,9 @@
     });
   })();
 
+  /* ---------------------------------------------------------
+   * 进程行管理
+   * ------------------------------------------------------- */
   function addRow(name, arrival, burst, priority) {
     name = name == null ? '' : name;
     arrival = arrival == null ? '' : arrival;
@@ -148,7 +145,6 @@
     resetResultArea();
     stopAnim();
     currentResult = null;
-    currentSnapshots = null;
     currentSeconds = null;
   }
 
@@ -200,6 +196,9 @@
     return { list: list };
   }
 
+  /* ---------------------------------------------------------
+   * 算法选择 UI
+   * ------------------------------------------------------- */
   function initAlgoPills() {
     const wrap = $('algoPills');
     const keys = Object.keys(S.ALGORITHMS);
@@ -476,6 +475,9 @@
       '</div>';
   }
 
+  /* ---------------------------------------------------------
+   * 逐步时间轴：每秒一格 + 每格入场闪一下
+   * ------------------------------------------------------- */
   function makeTimelineBlock(sec) {
     const el = document.createElement('div');
     el.style.flex = '0 0 ' + SEC_BLOCK_WIDTH + 'px';
@@ -526,6 +528,9 @@
     }
   }
 
+  /* ---------------------------------------------------------
+   * 甘特图（保持合块，裁剪到已揭示秒数）
+   * ------------------------------------------------------- */
   function ganttBlockHTML(seg, pct) {
     const tip = '<span class="tip">' +
       (seg.name === null ? '空闲' : esc(seg.name)) + '：' + seg.start + ' → ' + seg.end +
@@ -590,6 +595,9 @@
     timesEl.innerHTML = timesHtml;
   }
 
+  /* ---------------------------------------------------------
+   * 就绪队列面板（按秒实时计算剩余时间）
+   * ------------------------------------------------------- */
   function renderReadyPanel() {
     const block = document.querySelector('.result-block');
     if (!block || !currentResult) return;
@@ -606,35 +614,63 @@
       return;
     }
 
-    clockEl.textContent = String(anim.revealed);
+    const now = anim.revealed;
+    clockEl.textContent = String(now);
 
-    if (anim.revealed >= total) {
+    if (now >= total) {
       runningEl.innerHTML = '<span class="ready-empty done">✓ 全部完成</span>';
       queueEl.innerHTML = '<span class="ready-empty">—</span>';
       return;
     }
 
-    const second = anim.revealed - 1;
-    const segIdx = findSegmentIndexAtSecond(second);
-    const snap = currentSnapshots[segIdx];
-    if (!snap) return;
+    /* 1. 统计每个进程「已执行秒数」——不含当前这一秒 */
+    const executed = {};
+    for (let i = 0; i < now - 1; i++) {
+      const s = currentSeconds[i];
+      if (s.name !== null) executed[s.name] = (executed[s.name] || 0) + 1;
+    }
 
-    if (snap.running === null) {
+    /* 2. 当前正在执行的进程（当前这一秒） */
+    const curSec = currentSeconds[now - 1];
+    const runningName = curSec.name;
+
+    if (runningName === null) {
       runningEl.innerHTML = '<span class="ready-empty">CPU 空闲</span>';
     } else {
-      const color = colorMap.get(snap.running) || '#888';
+      const p = currentResult.processes.find(x => x.name === runningName);
+      const remain = p ? (p.burst - (executed[runningName] || 0)) : 0;
+      const color = colorMap.get(runningName) || '#888';
       runningEl.innerHTML =
         '<span class="ready-chip running" style="--chip-color:' + color + '">' +
           '<span class="chip-dot-mini"></span>' +
-          '<span>' + esc(snap.running) + '</span>' +
-          '<span class="chip-remaining">剩 ' + snap.runningRemaining + 't</span>' +
+          '<span>' + esc(runningName) + '</span>' +
+          '<span class="chip-remaining">剩 ' + remain + 't</span>' +
         '</span>';
     }
 
-    if (!snap.ready.length) {
+    /* 3. 就绪队列：已到达 + 未完成 + 不在 CPU 上 */
+    const orderMap = new Map();
+    currentResult.processes.forEach(function (p, i) { orderMap.set(p.name, i); });
+
+    const ready = [];
+    currentResult.processes.forEach(function (p) {
+      if (p.name === runningName) return;
+      if (p.arrival > now) return;
+      const done = executed[p.name] || 0;
+      if (done >= p.burst) return;
+      ready.push({ name: p.name, remaining: p.burst - done });
+    });
+
+    ready.sort(function (a, b) {
+      const pa = currentResult.processes.find(x => x.name === a.name);
+      const pb = currentResult.processes.find(x => x.name === b.name);
+      return pa.arrival - pb.arrival || orderMap.get(a.name) - orderMap.get(b.name);
+    });
+
+    if (!ready.length) {
       queueEl.innerHTML = '<span class="ready-empty">（空）</span>';
     } else {
-      queueEl.innerHTML = snap.ready.map(function (r) {
+      queueEl.innerHTML = ready.map(function (r) {
         const color = colorMap.get(r.name) || '#888';
         return '<span class="ready-chip" style="--chip-color:' + color + '">' +
                  '<span class="chip-dot-mini"></span>' +
@@ -645,6 +681,9 @@
     }
   }
 
+  /* ---------------------------------------------------------
+   * 播放 UI 更新
+   * ------------------------------------------------------- */
   function updatePlaybackUI() {
     if (!currentResult || !currentSeconds) return;
 
@@ -752,6 +791,9 @@
     }
   }
 
+  /* ---------------------------------------------------------
+   * 主流程：单算法调度
+   * ------------------------------------------------------- */
   function run() {
     const res = readProcesses();
     if (res.error) { toast(res.error); return; }
@@ -773,7 +815,6 @@
     }
 
     currentResult = result;
-    currentSnapshots = S.buildSnapshots(result);
     currentSeconds = expandToSeconds(result.timeline);
 
     $('resultArea').innerHTML = renderSingleAlgoView(result);
@@ -787,6 +828,9 @@
     startAnim();
   }
 
+  /* ---------------------------------------------------------
+   * 算法对比（静态显示最终结果）
+   * ------------------------------------------------------- */
   function renderCompareColumn(algoKey, result) {
     const meta = S.ALGORITHMS[algoKey];
     const total = result.stats.totalTime || 1;
@@ -899,7 +943,6 @@
 
     stopAnim();
     currentResult = null;
-    currentSnapshots = null;
     currentSeconds = null;
 
     colorMap = new Map();
@@ -942,6 +985,9 @@
     toast('对比完成', 'success');
   }
 
+  /* ---------------------------------------------------------
+   * 导出 CSV
+   * ------------------------------------------------------- */
   function exportCSV() {
     if (!currentResult) { toast('请先执行一次调度'); return; }
 
@@ -978,6 +1024,9 @@
     toast('CSV 已导出', 'success');
   }
 
+  /* ---------------------------------------------------------
+   * 配置保存 / 导入
+   * ------------------------------------------------------- */
   function exportConfig() {
     const res = readProcesses();
     if (res.error) { toast(res.error); return; }
@@ -1013,6 +1062,9 @@
     reader.readAsText(file, 'utf-8');
   }
 
+  /* ---------------------------------------------------------
+   * 经典测试用例下拉
+   * ------------------------------------------------------- */
   function initPresets() {
     const sel = $('presetSelect');
     S.TEST_CASES.forEach(function (tc, i) {
@@ -1035,6 +1087,9 @@
     });
   }
 
+  /* ---------------------------------------------------------
+   * 事件绑定 & 初始化
+   * ------------------------------------------------------- */
   function init() {
     initAlgoPills();
     initCompareSelects();
