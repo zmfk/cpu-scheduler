@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPU 调度算法模拟器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>CPU <span>Scheduler</span></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" id="btnVerify" title="运行经典测试用例，与手算结果比对">🧪 算法自检</button>
+      <button class="btn-icon" id="themeBtn" title="切换主题">🌙</button>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+
+  <section class="step-section">
+    <div class="section-header">
+      <div class="section-title">
+        <span class="step-num">1</span>
+        <span>配置进程</span>
+        <span class="count-badge" id="procCount">0</span>
+      </div>
+      <div class="section-actions">
+        <select class="mini-select" id="presetSelect">
+          <option value="">经典测试用例…</option>
+        </select>
+        <button class="btn btn-ghost" id="btnAdd">＋ 添加</button>
+        <button class="btn btn-ghost" id="btnImport">📂 导入</button>
+        <button class="btn btn-ghost" id="btnExportCfg">💾 保存配置</button>
+        <button class="btn btn-ghost" id="btnClear">清空</button>
+        <input type="file" id="fileInput" accept=".json" hidden>
+      </div>
+    </div>
+    <div class="process-grid" id="processList"></div>
+    <p class="hint">
+      平局规则：<b>先比较到达时间，再比较输入顺序</b>（越靠前的进程优先级越高）。
+      优先级列仅在 <b>PRIO / PRIO-P</b> 中生效，<b>数值越小优先级越高</b>。
+    </p>
+  </section>
+
+  <section class="step-section">
+    <div class="section-header">
+      <div class="section-title">
+        <span class="step-num">2</span>
+        <span>选择调度算法</span>
+      </div>
+    </div>
+    <div class="algo-bar">
+      <div class="algo-row">
+        <div class="algo-pills" id="algoPills"></div>
+        <div class="action-buttons">
+          <div class="quantum-field" id="quantumField" style="display:none">
+            <label>时间片 <input type="number" id="quantum" min="1" value="2"></label>
+          </div>
+          <button class="btn btn-primary" id="btnRun">▶ 开始调度</button>
+          <button class="btn btn-ghost" id="btnExportCsv">⬇ 导出 CSV</button>
+        </div>
+      </div>
+
+      <div class="compare-controls">
+        <span class="cc-label">算法对比</span>
+        <select class="compare-select" id="compareA"></select>
+        <span class="compare-vs">VS</span>
+        <select class="compare-select" id="compareB"></select>
+        <button class="btn btn-success" id="btnCompare">⇄ 对比</button>
+        <button class="btn btn-ghost" id="btnSwap" title="交换左右">⇅</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="step-section">
+    <div class="section-header">
+      <div class="section-title">
+        <span class="step-num">3</span>
+        <span>调度结果</span>
+        <span class="count-badge" id="resultMeta" style="display:none;"></span>
+      </div>
+    </div>
+    <div class="result-area" id="resultArea">
+      <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <p>配置进程并选择算法后<br>点击「开始调度」逐步查看结果</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="modal-mask" id="verifyModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>🧪 算法自检 · 与手算结果比对</span>
+      <button class="btn-icon" id="btnCloseVerify">✕</button>
+    </div>
+    <div class="modal-body" id="verifyBody"></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="scheduler.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
