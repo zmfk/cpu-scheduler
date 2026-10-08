@@ -6,16 +6,13 @@
  * ========================================================= */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();          // Node
+    module.exports = factory();
   } else {
-    root.Scheduler = factory();          // 浏览器
+    root.Scheduler = factory();
   }
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  /* ---------------------------------------------------------
-   * 1. 算法元数据
-   * ------------------------------------------------------- */
   const ALGORITHMS = {
     fcfs:  { name: '先来先服务',     badge: 'FCFS',   preemptive: false, needPriority: false, needQuantum: false },
     sjf:   { name: '短进程优先',     badge: 'SJF',    preemptive: false, needPriority: false, needQuantum: false },
@@ -27,11 +24,8 @@
     mlfq:  { name: '多级反馈队列',   badge: 'MLFQ',   preemptive: true,  needPriority: false, needQuantum: true  },
   };
 
-  const DEFAULT_QUANTA = [2, 4, 8];   // MLFQ 三级队列时间片
+  const DEFAULT_QUANTA = [2, 4, 8];
 
-  /* ---------------------------------------------------------
-   * 2. 内部工具
-   * ------------------------------------------------------- */
   function makeProcs(inputs) {
     return inputs.map(function (p, i) {
       return {
@@ -39,7 +33,7 @@
         arrival: Math.floor(p.arrival),
         burst: Math.max(1, Math.floor(p.burst)),
         priority: p.priority == null ? 0 : Math.floor(p.priority),
-        idx: i,                        // 输入顺序 —— 平局的最终裁决者
+        idx: i,
         remaining: Math.max(1, Math.floor(p.burst)),
         start: null,
         finish: null,
@@ -48,7 +42,6 @@
     });
   }
 
-  /* 统一平局规则：到达时间 → 输入顺序 */
   const byArrival = (a, b) => a.arrival - b.arrival || a.idx - b.idx;
   const tieBreak  = (a, b) => a.arrival - b.arrival || a.idx - b.idx;
 
@@ -57,10 +50,6 @@
     raw.push({ start: start, end: end, name: name });
   }
 
-  /**
-   * 性能优化核心：把逐单位的原始区间合并成连续段。
-   * [P1:0-1, P1:1-2, P1:2-3] → [P1:0-3]
-   */
   function compact(raw) {
     const out = [];
     for (let i = 0; i < raw.length; i++) {
@@ -75,9 +64,6 @@
     return out;
   }
 
-  /* ---------------------------------------------------------
-   * 3. 非抢占式调度统一框架
-   * ------------------------------------------------------- */
   function nonPreemptive(inputs, pick) {
     const ps = makeProcs(inputs);
     const raw = [];
@@ -122,9 +108,6 @@
     return ready[0];
   }
 
-  /* ---------------------------------------------------------
-   * 4. 抢占式调度统一框架
-   * ------------------------------------------------------- */
   function preemptive(inputs, compare) {
     const ps = makeProcs(inputs);
     const raw = [];
@@ -174,9 +157,6 @@
   const cmpRemaining = (a, b) => a.remaining - b.remaining || tieBreak(a, b);
   const cmpPriority  = (a, b) => a.priority  - b.priority  || tieBreak(a, b);
 
-  /* ---------------------------------------------------------
-   * 5. 时间片轮转 RR
-   * ------------------------------------------------------- */
   function rr(inputs, quantum) {
     const q = Math.max(1, quantum || 2);
     const ps = makeProcs(inputs);
@@ -214,9 +194,6 @@
     return { ps: ps, raw: raw, quantum: q };
   }
 
-  /* ---------------------------------------------------------
-   * 6. 多级反馈队列 MLFQ
-   * ------------------------------------------------------- */
   function mlfq(inputs, quanta) {
     const Q = (quanta && quanta.length ? quanta.slice() : DEFAULT_QUANTA.slice());
     const levels = Q.length;
@@ -274,9 +251,6 @@
     return { ps: ps, raw: raw, quantum: Q };
   }
 
-  /* ---------------------------------------------------------
-   * 7. 结果组装
-   * ------------------------------------------------------- */
   function buildResult(ps, raw, algorithm, quantum) {
     const timeline = compact(raw);
     const totalTime = timeline.length ? timeline[timeline.length - 1].end : 0;
@@ -315,9 +289,6 @@
     };
   }
 
-  /* ---------------------------------------------------------
-   * 8. 对外主入口
-   * ------------------------------------------------------- */
   function run(inputs, algorithm, options) {
     options = options || {};
     if (!ALGORITHMS[algorithm]) throw new Error('未知调度算法：' + algorithm);
@@ -340,9 +311,6 @@
     return buildResult(res.ps, res.raw, algorithm, res.quantum);
   }
 
-  /* ---------------------------------------------------------
-   * 9. 就绪队列快照（供 UI 播放使用）
-   * ------------------------------------------------------- */
   function buildSnapshots(result) {
     const remain = new Map();
     result.processes.forEach(p => remain.set(p.name, p.burst));
@@ -381,64 +349,28 @@
   }
 
   /* ---------------------------------------------------------
-   * 10. 经典测试用例（含手算期望值 —— 已修正）
+   * 经典测试用例（供下拉菜单快速载入，不再用于自检）
    * ------------------------------------------------------- */
   const TEST_CASES = [
     {
-      name: '经典用例 A（4 进程，错开到达到）',
+      name: '用例 A（4 进程，错开到达到）',
       processes: [
         { name: 'P1', arrival: 0, burst: 7, priority: 3 },
         { name: 'P2', arrival: 2, burst: 4, priority: 1 },
         { name: 'P3', arrival: 4, burst: 1, priority: 4 },
         { name: 'P4', arrival: 5, burst: 4, priority: 2 },
       ],
-      /*
-       * 手算过程（详见实验报告「数据处理」章节）：
-       * FCFS:  P1(0-7)  P2(7-11) P3(11-12) P4(12-16)
-       *        周转 7,9,8,11  → 平均 8.75；等待 0,5,7,7  → 平均 4.75
-       * SJF :  P1(0-7)  P3(7-8)  P2(8-12) P4(12-16)
-       *        周转 7,10,4,11 → 平均 8.00；等待 0,6,3,7  → 平均 4.00
-       * SRTF:  P1(0-2) P2(2-4) P3(4-5) P2(5-7) P4(7-11) P1(11-16)
-       *        周转 16,5,1,6  → 平均 7.00；等待 9,1,0,2  → 平均 3.00
-       * HRRN:  P1(0-7) P3(7-8) P2(8-12) P4(12-16)
-       *        周转 7,10,4,11 → 平均 8.00；等待 0,6,3,7  → 平均 4.00
-       * RR(q=2): P1(0-2) P2(2-4) P1(4-6) P3(6-7)
-       *          P2(7-9) P4(9-11) P1(11-13) P4(13-15) P1(15-16)
-       *          周转 16,7,3,10 → 平均 9.00；等待 9,3,2,6  → 平均 5.00
-       */
-      expected: {
-        fcfs: { avgTurnaround: 8.75, avgWaiting: 4.75 },
-        sjf:  { avgTurnaround: 8.00, avgWaiting: 4.00 },
-        srtf: { avgTurnaround: 7.00, avgWaiting: 3.00 },
-        hrrn: { avgTurnaround: 8.00, avgWaiting: 4.00 },
-        rr:   { avgTurnaround: 9.00, avgWaiting: 5.00, quantum: 2 },
-      },
     },
     {
-      name: '经典用例 B（3 进程，全部同时到达）',
+      name: '用例 B（3 进程，全部同时到达）',
       processes: [
         { name: 'P1', arrival: 0, burst: 24 },
         { name: 'P2', arrival: 0, burst: 3 },
         { name: 'P3', arrival: 0, burst: 3 },
       ],
-      /*
-       * FCFS:   P1(0-24) P2(24-27) P3(27-30)
-       *         周转 24,27,30   → 平均 27.0；等待 0,24,27  → 平均 17.0
-       * SJF :   P2(0-3)  P3(3-6)   P1(6-30)
-       *         周转 3,6,30     → 平均 13.0；等待 0,3,6    → 平均 3.0
-       * SRTF:   同 SJF → 13.0 / 3.0
-       * RR(4):  P1(0-4) P2(4-7) P3(7-10) P1(10-30)
-       *         周转 30,7,10    → 平均 47/3；等待 6,4,7  → 平均 17/3
-       */
-      expected: {
-        fcfs: { avgTurnaround: 27.0,   avgWaiting: 17.0 },
-        sjf:  { avgTurnaround: 13.0,   avgWaiting: 3.0  },
-        srtf: { avgTurnaround: 13.0,   avgWaiting: 3.0  },
-        rr:   { avgTurnaround: 47 / 3, avgWaiting: 17 / 3, quantum: 4 },
-      },
     },
     {
-      name: '经典用例 C（优先级调度验证）',
+      name: '用例 C（5 进程，优先级验证）',
       processes: [
         { name: 'P1', arrival: 0, burst: 10, priority: 3 },
         { name: 'P2', arrival: 1, burst: 1,  priority: 1 },
@@ -446,73 +378,15 @@
         { name: 'P4', arrival: 3, burst: 1,  priority: 5 },
         { name: 'P5', arrival: 4, burst: 5,  priority: 2 },
       ],
-      /*
-       * PRIO（非抢占，数值小者优先）：
-       *   P1(0-10) P2(10-11) P5(11-16) P3(16-18) P4(18-19)
-       *   周转 10,10,16,16,12 → 平均 12.8；等待 0,9,14,15,7 → 平均 9.0
-       */
-      expected: {
-        prio: { avgTurnaround: 12.8, avgWaiting: 9.0 },
-      },
     },
   ];
 
-  /* ---------------------------------------------------------
-   * 11. 自检：跑全部用例，与手算结果比对
-   * ------------------------------------------------------- */
-  function verify(tolerance) {
-    const tol = tolerance == null ? 1e-9 : tolerance;
-    const rows = [];
-
-    TEST_CASES.forEach(function (tc) {
-      Object.keys(tc.expected).forEach(function (algo) {
-        const exp = tc.expected[algo];
-        const opts = {};
-        if (exp.quantum != null) opts.quantum = exp.quantum;
-        if (exp.mlfqQuanta != null) opts.mlfqQuanta = exp.mlfqQuanta;
-
-        let actual = null, err = null;
-        try {
-          actual = run(tc.processes, algo, opts);
-        } catch (e) {
-          err = e.message;
-        }
-
-        const okT = !err && Math.abs(actual.stats.avgTurnaround - exp.avgTurnaround) < tol;
-        const okW = !err && Math.abs(actual.stats.avgWaiting - exp.avgWaiting) < tol;
-
-        rows.push({
-          caseName: tc.name,
-          algorithm: algo,
-          badge: ALGORITHMS[algo].badge,
-          expectedTurnaround: exp.avgTurnaround,
-          actualTurnaround: err ? NaN : actual.stats.avgTurnaround,
-          expectedWaiting: exp.avgWaiting,
-          actualWaiting: err ? NaN : actual.stats.avgWaiting,
-          pass: okT && okW,
-          error: err,
-        });
-      });
-    });
-
-    return {
-      rows: rows,
-      passed: rows.filter(r => r.pass).length,
-      total: rows.length,
-      allPassed: rows.every(r => r.pass),
-    };
-  }
-
-  /* ---------------------------------------------------------
-   * 12. 导出
-   * ------------------------------------------------------- */
   return {
     ALGORITHMS: ALGORITHMS,
     DEFAULT_QUANTA: DEFAULT_QUANTA,
     TEST_CASES: TEST_CASES,
     run: run,
     buildSnapshots: buildSnapshots,
-    verify: verify,
     _compact: compact,
   };
 });

@@ -327,7 +327,7 @@ body {
   border:2px solid var(--success); border-radius:50px;
 }
 
-/* ===== 逐步时间轴（按秒分割，每秒一个格子） ===== */
+/* ===== 逐步时间轴（每秒一格） ===== */
 .tl-wrap {
   overflow-x:auto; padding-bottom:8px; scroll-behavior:smooth;
 }
@@ -343,7 +343,6 @@ body {
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   color:#fff; font-size:11px; font-weight:700;
   position:relative; overflow:hidden;
-  /* 每格出现时用 tl-in 做一次入场，之后不再动 */
   animation: tlIn .18s ease;
 }
 @keyframes tlIn {
@@ -367,8 +366,6 @@ body {
   display:flex; align-items:center; justify-content:center;
   width:100%; color:var(--text-muted); font-size:12px; font-style:italic;
 }
-
-/* ★ 每一格新出现时闪一下（1 秒一次性动画，不是持续闪） */
 .tl-block.tl-flash::after {
   content: '';
   position: absolute;
@@ -597,42 +594,6 @@ table.result-table tbody td:first-child {
 @keyframes toastIn { from { opacity:0; transform:translateX(30px); } to { opacity:1; transform:translateX(0); } }
 @keyframes toastOut { from { opacity:1; transform:translateX(0); } to { opacity:0; transform:translateX(30px); } }
 
-.modal-mask {
-  position:fixed; inset:0; background:rgba(15,23,42,.55);
-  backdrop-filter:blur(4px); z-index:9998;
-  display:none; align-items:center; justify-content:center; padding:24px;
-}
-.modal-mask.show { display:flex; }
-.modal-box {
-  background:var(--bg-card); border:1px solid var(--border);
-  border-radius:var(--radius-lg); box-shadow:var(--shadow-lg);
-  width:min(920px,100%); max-height:82vh; display:flex; flex-direction:column;
-  animation:fadeUp .3s ease;
-}
-.modal-head {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:16px 20px; border-bottom:1px solid var(--border);
-  font-size:14px; font-weight:700;
-}
-.modal-body { padding:18px 20px; overflow:auto; }
-.verify-summary {
-  padding:12px 16px; border-radius:var(--radius); margin-bottom:14px;
-  font-size:13px; font-weight:600;
-}
-.verify-summary.ok { background:var(--success-light); color:var(--success); }
-.verify-summary.fail { background:var(--danger-light); color:var(--danger); }
-.verify-table { width:100%; border-collapse:collapse; font-size:13px; }
-.verify-table th, .verify-table td {
-  padding:8px 10px; border-bottom:1px solid var(--border); text-align:center;
-}
-.verify-table th {
-  background:var(--bg-input); color:var(--text-muted);
-  font-size:11px; text-transform:uppercase; letter-spacing:.5px;
-}
-.verify-table td.mono { font-family:var(--mono); }
-.verify-table .ok { color:var(--success); font-weight:700; }
-.verify-table .fail { color:var(--danger); font-weight:700; }
-
 @media (max-width:640px) {
   .main { padding:16px 14px 40px; }
   .topbar-inner { padding:0 14px; }
@@ -661,7 +622,7 @@ table.result-table tbody td:first-child {
 
 @media print {
   .topbar, .btn, .algo-bar, .process-grid, .section-actions,
-  .play-controls, .compare-controls, .modal-mask { display:none !important; }
+  .play-controls, .compare-controls { display:none !important; }
   body { background:#fff; }
   .step-section { box-shadow:none; border:1px solid #ddd; page-break-inside:avoid; }
 }

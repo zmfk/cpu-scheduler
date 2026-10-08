@@ -2,11 +2,10 @@
  * app.js —— UI 层（DOM 绑定、渲染、动画、导入导出）
  * 依赖：scheduler.js 暴露的 window.Scheduler
  *
- * ★ 本版改动：
- *   - 逐步时间轴按「每秒一格」渲染，不再合并连续段
- *   - 每格出现时闪一下（tl-flash，1s 一次性动画），之后静止
- *   - 播放速度改为秒级节奏（默认 1s / 秒），与闪烁同步
- *   - 时钟/就绪面板按「秒」反查所在段
+ * 本版改动：
+ *   - 时间轴按「每秒一格」渲染，每格出现时闪一下
+ *   - 结果表格与指标卡随时钟 t 动态显现
+ *   - 移除「算法自检」功能
  * ========================================================= */
 (function () {
   'use strict';
@@ -19,21 +18,20 @@
     '#14b8a6', '#e11d48'
   ];
 
-  const SEC_BLOCK_WIDTH = 34;   // 时间轴每秒的固定宽度（px）
+  const SEC_BLOCK_WIDTH = 34;
 
   let rowSeq = 0;
   let colorMap = new Map();
   let currentResult = null;
   let currentSnapshots = null;
-  let currentSeconds = null;    // 展开后的「逐秒」数组
+  let currentSeconds = null;
 
-  /* requestAnimationFrame 驱动的动画状态 */
   const anim = {
-    revealed: 0,          // 已显示的秒数
+    revealed: 0,
     playing: false,
     rafId: null,
     lastTs: 0,
-    speed: 1000,          // 毫秒 / 秒，默认 1s 一格
+    speed: 1000,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -45,10 +43,6 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  /* ---------------------------------------------------------
-   * 工具：把 compact timeline 展开成「逐秒」数组
-   * 每段长度 span → span 个 { name, start, end } 格子
-   * ------------------------------------------------------- */
   function expandToSeconds(timeline) {
     const seconds = [];
     for (let i = 0; i < timeline.length; i++) {
@@ -60,7 +54,6 @@
     return seconds;
   }
 
-  /* 根据「秒」反查所在的 compact 段索引（用于就绪队列快照） */
   function findSegmentIndexAtSecond(second) {
     if (!currentResult) return 0;
     let acc = 0;
@@ -73,9 +66,6 @@
     return currentResult.timeline.length - 1;
   }
 
-  /* ---------------------------------------------------------
-   * Toast
-   * ------------------------------------------------------- */
   function toast(msg, type) {
     type = type || 'error';
     const container = $('toastContainer');
@@ -103,9 +93,6 @@
     }, 0);
   }
 
-  /* ---------------------------------------------------------
-   * 主题
-   * ------------------------------------------------------- */
   (function initTheme() {
     const btn = $('themeBtn');
     const saved = localStorage.getItem('cpu-theme') || 'light';
@@ -120,9 +107,6 @@
     });
   })();
 
-  /* ---------------------------------------------------------
-   * 进程行管理
-   * ------------------------------------------------------- */
   function addRow(name, arrival, burst, priority) {
     name = name == null ? '' : name;
     arrival = arrival == null ? '' : arrival;
@@ -177,9 +161,6 @@
     $('resultMeta').style.display = 'none';
   }
 
-  /* ---------------------------------------------------------
-   * 读取 / 校验进程输入
-   * ------------------------------------------------------- */
   function readProcesses() {
     const items = Array.prototype.slice.call($$('#processList .process-chip'));
     const list = [];
@@ -219,9 +200,6 @@
     return { list: list };
   }
 
-  /* ---------------------------------------------------------
-   * 算法选择 UI
-   * ------------------------------------------------------- */
   function initAlgoPills() {
     const wrap = $('algoPills');
     const keys = Object.keys(S.ALGORITHMS);
@@ -307,28 +285,85 @@
   }
 
   /* ---------------------------------------------------------
-   * 渲染：指标卡 / 表格 / 顺序
+   * 指标卡：按当前时钟 t 动态计算
    * ------------------------------------------------------- */
-  function renderMetricCards(stats) {
+  function renderMetricCards(stats, t, processes) {
+    const DASH = '<span style="color:var(--text-muted);font-weight:500">—</span>';
+
+    if (typeof t !== 'number' || !processes) {
+      return '' +
+        '<div class="metric-card"><div class="metric-label">平均周转</div>' +
+          '<div class="metric-value accent">' + stats.avgTurnaround.toFixed(2) +
+          '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-card"><div class="metric-label">平均等待</div>' +
+          '<div class="metric-value warning">' + stats.avgWaiting.toFixed(2) +
+          '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-card"><div class="metric-label">平均响应</div>' +
+          '<div class="metric-value purple">' + stats.avgResponse.toFixed(2) +
+          '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-card"><div class="metric-label">CPU 利用率</div>' +
+          '<div class="metric-value success">' + stats.utilization.toFixed(1) +
+          '<span class="metric-unit">%</span></div></div>' +
+        '<div class="metric-card"><div class="metric-label">完成时长</div>' +
+          '<div class="metric-value">' + stats.totalTime +
+          '<span class="metric-unit">t</span></div></div>';
+    }
+
+    const now = t;
+    const doneProcs    = processes.filter(p => p.finish !== null && p.finish <= now);
+    const startedProcs = processes.filter(p => p.start  !== null && p.start  <= now);
+
+    function avgOf(list, field) {
+      if (!list.length) return null;
+      let s = 0;
+      for (let i = 0; i < list.length; i++) s += list[i][field];
+      return s / list.length;
+    }
+
+    const avgT = avgOf(doneProcs, 'turnaround');
+    const avgW = avgOf(doneProcs, 'waiting');
+    const avgR = avgOf(startedProcs, 'response');
+
+    let busy = 0;
+    if (currentSeconds && now > 0) {
+      const lim = Math.min(now, currentSeconds.length);
+      for (let i = 0; i < lim; i++) {
+        if (currentSeconds[i].name !== null) busy++;
+      }
+    }
+    const util = now > 0 ? (busy / now) * 100 : 0;
+
+    function fmtVal(v, unit) {
+      if (v === null) return DASH;
+      return v.toFixed(2) + '<span class="metric-unit">' + unit + '</span>';
+    }
+
     return '' +
       '<div class="metric-card"><div class="metric-label">平均周转</div>' +
-        '<div class="metric-value accent">' + stats.avgTurnaround.toFixed(2) +
-        '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-value accent">' + fmtVal(avgT, 't') +
+        '</div></div>' +
       '<div class="metric-card"><div class="metric-label">平均等待</div>' +
-        '<div class="metric-value warning">' + stats.avgWaiting.toFixed(2) +
-        '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-value warning">' + fmtVal(avgW, 't') +
+        '</div></div>' +
       '<div class="metric-card"><div class="metric-label">平均响应</div>' +
-        '<div class="metric-value purple">' + stats.avgResponse.toFixed(2) +
-        '<span class="metric-unit">t</span></div></div>' +
+        '<div class="metric-value purple">' + fmtVal(avgR, 't') +
+        '</div></div>' +
       '<div class="metric-card"><div class="metric-label">CPU 利用率</div>' +
-        '<div class="metric-value success">' + stats.utilization.toFixed(1) +
-        '<span class="metric-unit">%</span></div></div>' +
-      '<div class="metric-card"><div class="metric-label">完成时长</div>' +
-        '<div class="metric-value">' + stats.totalTime +
-        '<span class="metric-unit">t</span></div></div>';
+        '<div class="metric-value success">' +
+          (now > 0 ? util.toFixed(1) + '<span class="metric-unit">%</span>' : DASH) +
+        '</div></div>' +
+      '<div class="metric-card"><div class="metric-label">进度</div>' +
+        '<div class="metric-value">' + now +
+          '<span class="metric-unit">/ ' + stats.totalTime + ' t</span></div></div>';
   }
 
-  function renderTable(processes, withPriority) {
+  /* ---------------------------------------------------------
+   * 结果表：按当前时钟 t 动态显现
+   * ------------------------------------------------------- */
+  function renderTable(processes, withPriority, t) {
+    const now = (typeof t === 'number') ? t : Infinity;
+    const DASH = '<span style="color:var(--text-muted);font-weight:500">—</span>';
+
     let html = '<table class="result-table"><thead><tr>' +
       '<th>进程</th><th>到达</th><th>执行</th>' +
       (withPriority ? '<th>优先级</th>' : '') +
@@ -336,15 +371,18 @@
 
     processes.forEach(function (p) {
       const color = colorMap.get(p.name) || '#888';
+      const started  = p.start  !== null && p.start  <= now;
+      const finished = p.finish !== null && p.finish <= now;
+
       html += '<tr>' +
         '<td><span class="p-dot" style="background:' + color + '"></span>' + esc(p.name) + '</td>' +
         '<td>' + p.arrival + '</td>' +
         '<td>' + p.burst + '</td>' +
         (withPriority ? '<td>' + p.priority + '</td>' : '') +
-        '<td>' + p.start + '</td>' +
-        '<td>' + p.finish + '</td>' +
-        '<td>' + p.turnaround + '</td>' +
-        '<td>' + p.waiting + '</td>' +
+        '<td>' + (started  ? p.start : DASH) + '</td>' +
+        '<td>' + (finished ? p.finish : DASH) + '</td>' +
+        '<td>' + (finished ? p.turnaround : DASH) + '</td>' +
+        '<td>' + (finished ? p.waiting : DASH) + '</td>' +
       '</tr>';
     });
     html += '</tbody></table>';
@@ -363,9 +401,6 @@
     return '<div class="order-flow"><span class="order-label">调度顺序</span>' + nodes + '</div>';
   }
 
-  /* ---------------------------------------------------------
-   * 渲染：单算法视图骨架
-   * ------------------------------------------------------- */
   function renderSingleAlgoView(result) {
     const meta = S.ALGORITHMS[result.algorithm];
     const needPrio = meta.needPriority;
@@ -429,15 +464,18 @@
           '</div>' +
         '</div>' +
 
-        '<div class="metrics-row">' + renderMetricCards(result.stats) + '</div>' +
-        '<div class="table-wrap">' + renderTable(result.processes, needPrio) + '</div>' +
+        '<div class="metrics-row dynamic-metrics">' +
+          renderMetricCards(result.stats, 0, result.processes) +
+        '</div>' +
+
+        '<div class="table-wrap dynamic-table">' +
+          renderTable(result.processes, needPrio, 0) +
+        '</div>' +
+
         renderOrder(result.timeline) +
       '</div>';
   }
 
-  /* ---------------------------------------------------------
-   * 逐步时间轴：每秒一格 + 每格入场闪一下
-   * ------------------------------------------------------- */
   function makeTimelineBlock(sec) {
     const el = document.createElement('div');
     el.style.flex = '0 0 ' + SEC_BLOCK_WIDTH + 'px';
@@ -479,7 +517,6 @@
       while (track.children.length > target) track.removeChild(track.lastElementChild);
     } else {
       for (let i = shown; i < target; i++) {
-        // 每新增一格，会自然触发一次 tl-flash 动画（秒闪）
         track.appendChild(makeTimelineBlock(currentSeconds[i]));
       }
     }
@@ -489,9 +526,6 @@
     }
   }
 
-  /* ---------------------------------------------------------
-   * 甘特图（保持合块的 compact timeline）
-   * ------------------------------------------------------- */
   function ganttBlockHTML(seg, pct) {
     const tip = '<span class="tip">' +
       (seg.name === null ? '空闲' : esc(seg.name)) + '：' + seg.start + ' → ' + seg.end +
@@ -517,7 +551,6 @@
       return;
     }
 
-    // 根据已揭示秒数，裁剪出对应的 compact 段
     const segs = [];
     let acc = 0;
     for (let i = 0; i < currentResult.timeline.length; i++) {
@@ -527,7 +560,6 @@
         segs.push(seg);
         acc += span;
       } else {
-        // 当前段被部分揭示
         const shownSpan = revealed - acc;
         if (shownSpan > 0) {
           segs.push({ name: seg.name, start: seg.start, end: seg.start + shownSpan });
@@ -558,9 +590,6 @@
     timesEl.innerHTML = timesHtml;
   }
 
-  /* ---------------------------------------------------------
-   * 就绪队列面板（按「秒」定位所在段）
-   * ------------------------------------------------------- */
   function renderReadyPanel() {
     const block = document.querySelector('.result-block');
     if (!block || !currentResult) return;
@@ -577,7 +606,6 @@
       return;
     }
 
-    // 时钟：已揭示的秒数即当前时刻
     clockEl.textContent = String(anim.revealed);
 
     if (anim.revealed >= total) {
@@ -586,8 +614,7 @@
       return;
     }
 
-    // 用「秒」反查所在 compact 段的快照
-    const second = anim.revealed - 1;             // 0-based
+    const second = anim.revealed - 1;
     const segIdx = findSegmentIndexAtSecond(second);
     const snap = currentSnapshots[segIdx];
     if (!snap) return;
@@ -618,14 +645,27 @@
     }
   }
 
-  /* ---------------------------------------------------------
-   * 动画（requestAnimationFrame 驱动）
-   * ------------------------------------------------------- */
   function updatePlaybackUI() {
     if (!currentResult || !currentSeconds) return;
+
     renderReadyPanel();
     renderTimelineIncremental();
     renderGantt();
+
+    const block = document.querySelector('.result-block');
+    if (block) {
+      const t = anim.revealed;
+      const meta = S.ALGORITHMS[currentResult.algorithm];
+
+      const metricsEl = block.querySelector('.dynamic-metrics');
+      if (metricsEl) {
+        metricsEl.innerHTML = renderMetricCards(currentResult.stats, t, currentResult.processes);
+      }
+      const tableEl = block.querySelector('.dynamic-table');
+      if (tableEl) {
+        tableEl.innerHTML = renderTable(currentResult.processes, meta.needPriority, t);
+      }
+    }
 
     const playBtn = document.querySelector('.play-btn');
     if (playBtn) {
@@ -712,9 +752,6 @@
     }
   }
 
-  /* ---------------------------------------------------------
-   * 主流程：单算法调度
-   * ------------------------------------------------------- */
   function run() {
     const res = readProcesses();
     if (res.error) { toast(res.error); return; }
@@ -737,7 +774,7 @@
 
     currentResult = result;
     currentSnapshots = S.buildSnapshots(result);
-    currentSeconds = expandToSeconds(result.timeline);   // ★ 逐秒展开
+    currentSeconds = expandToSeconds(result.timeline);
 
     $('resultArea').innerHTML = renderSingleAlgoView(result);
     const meta = $('resultMeta');
@@ -750,9 +787,6 @@
     startAnim();
   }
 
-  /* ---------------------------------------------------------
-   * 算法对比（用合块甘特图，不做逐秒动画）
-   * ------------------------------------------------------- */
   function renderCompareColumn(algoKey, result) {
     const meta = S.ALGORITHMS[algoKey];
     const total = result.stats.totalTime || 1;
@@ -908,9 +942,6 @@
     toast('对比完成', 'success');
   }
 
-  /* ---------------------------------------------------------
-   * 导出 CSV
-   * ------------------------------------------------------- */
   function exportCSV() {
     if (!currentResult) { toast('请先执行一次调度'); return; }
 
@@ -947,9 +978,6 @@
     toast('CSV 已导出', 'success');
   }
 
-  /* ---------------------------------------------------------
-   * 配置保存 / 导入
-   * ------------------------------------------------------- */
   function exportConfig() {
     const res = readProcesses();
     if (res.error) { toast(res.error); return; }
@@ -985,9 +1013,6 @@
     reader.readAsText(file, 'utf-8');
   }
 
-  /* ---------------------------------------------------------
-   * 经典测试用例下拉
-   * ------------------------------------------------------- */
   function initPresets() {
     const sel = $('presetSelect');
     S.TEST_CASES.forEach(function (tc, i) {
@@ -1010,49 +1035,6 @@
     });
   }
 
-  /* ---------------------------------------------------------
-   * 算法自检弹窗
-   * ------------------------------------------------------- */
-  function showVerify() {
-    const result = S.verify();
-
-    let html = '<div class="verify-summary ' + (result.allPassed ? 'ok' : 'fail') + '">' +
-      (result.allPassed ? '✅' : '❌') + ' 通过 ' + result.passed + ' / ' + result.total +
-      ' 项校验' + (result.allPassed ? '，所有算法与手算结果一致。' : '，存在不一致项，请检查。') +
-      '</div>';
-
-    html += '<table class="verify-table"><thead><tr>' +
-      '<th>用例 / 算法</th>' +
-      '<th>期望平均周转</th><th>实际平均周转</th>' +
-      '<th>期望平均等待</th><th>实际平均等待</th>' +
-      '<th>结果</th></tr></thead><tbody>';
-
-    let lastCase = null;
-    result.rows.forEach(function (r) {
-      if (r.caseName !== lastCase) {
-        html += '<tr><td colspan="6" style="text-align:left;' +
-          'background:var(--bg-input);font-weight:700;font-size:12px;">' +
-          esc(r.caseName) + '</td></tr>';
-        lastCase = r.caseName;
-      }
-      html += '<tr>' +
-        '<td>' + r.badge + '</td>' +
-        '<td class="mono">' + r.expectedTurnaround.toFixed(2) + '</td>' +
-        '<td class="mono">' + (isNaN(r.actualTurnaround) ? '—' : r.actualTurnaround.toFixed(2)) + '</td>' +
-        '<td class="mono">' + r.expectedWaiting.toFixed(2) + '</td>' +
-        '<td class="mono">' + (isNaN(r.actualWaiting) ? '—' : r.actualWaiting.toFixed(2)) + '</td>' +
-        '<td class="' + (r.pass ? 'ok' : 'fail') + '">' + (r.pass ? '✓' : '✗') + '</td>' +
-      '</tr>';
-    });
-    html += '</tbody></table>';
-
-    $('verifyBody').innerHTML = html;
-    $('verifyModal').classList.add('show');
-  }
-
-  /* ---------------------------------------------------------
-   * 事件绑定 & 初始化
-   * ------------------------------------------------------- */
   function init() {
     initAlgoPills();
     initCompareSelects();
@@ -1068,13 +1050,6 @@
     $('btnCompare').addEventListener('click', runCompare);
     $('btnExportCsv').addEventListener('click', exportCSV);
     $('btnExportCfg').addEventListener('click', exportConfig);
-    $('btnVerify').addEventListener('click', showVerify);
-    $('btnCloseVerify').addEventListener('click', function () {
-      $('verifyModal').classList.remove('show');
-    });
-    $('verifyModal').addEventListener('click', function (e) {
-      if (e.target === this) this.classList.remove('show');
-    });
 
     $('btnImport').addEventListener('click', function () { $('fileInput').click(); });
     $('fileInput').addEventListener('change', function () {
